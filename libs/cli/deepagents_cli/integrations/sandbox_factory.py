@@ -72,6 +72,7 @@ def _run_sandbox_setup(backend: SandboxBackendProtocol, setup_script_path: str) 
 
 _PROVIDER_TO_WORKING_DIR = {
     "agentcore": "/tmp",  # noqa: S108 # AgentCore Code Interpreter working directory
+    "alicloud-fc": "/home/user",
     "daytona": "/home/daytona",
     "langsmith": "/tmp",  # noqa: S108  # LangSmith sandbox working directory
     "modal": "/workspace",
@@ -93,8 +94,8 @@ def create_sandbox(
     provider abstraction.
 
     Args:
-        provider: Sandbox provider (`'agentcore'`, `'daytona'`, `'langsmith'`,
-            `'modal'`, `'runloop'`)
+        provider: Sandbox provider (`'agentcore'`, `'alicloud-fc'`, `'daytona'`,
+            `'langsmith'`, `'modal'`, `'runloop'`)
         sandbox_id: Optional existing sandbox ID to reuse
         setup_script_path: Optional path to setup script to run after sandbox starts
 
@@ -155,8 +156,8 @@ def get_default_working_dir(provider: str) -> str:
     """Get the default working directory for a given sandbox provider.
 
     Args:
-        provider: Sandbox provider name (`'agentcore'`, `'daytona'`, `'langsmith'`,
-            `'modal'`, `'runloop'`)
+        provider: Sandbox provider name (`'agentcore'`, `'alicloud-fc'`, `'daytona'`,
+            `'langsmith'`, `'modal'`, `'runloop'`)
 
     Returns:
         Default working directory path as string
@@ -405,6 +406,123 @@ class _LangSmithProvider(SandboxProvider):
             msg = f"Failed to build snapshot '{snapshot_name}': {create_err}"
             raise RuntimeError(msg) from create_err
         return snapshot.id
+
+
+class _AlicloudFCProvider(SandboxProvider):
+    """Alibaba Cloud FC sandbox provider.
+
+    Manages FC sandbox lifecycle via the ``agentrun-sdk`` package.
+    Requires ``AGENTRUN_TEMPLATE_NAME`` to be set.
+    """
+
+    def __init__(self) -> None:
+        """Initialize FC provider.
+
+        Raises:
+            ValueError: If ``AGENTRUN_TEMPLATE_NAME`` is not set.
+        """
+        self._template_name = os.environ.get("AGENTRUN_TEMPLATE_NAME", "")
+        if not self._template_name:
+            msg = (
+                "AGENTRUN_TEMPLATE_NAME environment variable is required "
+                "for the alicloud-fc sandbox provider."
+            )
+            raise ValueError(msg)
+
+    def get_or_create(
+        self,
+        *,
+        sandbox_id: str | None = None,
+        **kwargs: Any,  # noqa: ARG002  # required by SandboxProvider interface
+    ) -> SandboxBackendProtocol:
+        """Create a new FC sandbox or connect to an existing one.
+
+        Args:
+            sandbox_id: Optional sandbox ID to reconnect to.
+            **kwargs: Additional parameters (unused).
+
+        Returns:
+            `AlicloudFCSandbox` instance.
+
+        Raises:
+            RuntimeError: If the sandbox fails to become ready.
+        """
+        agentrun_module = _import_provider_module(
+            "agentrun.sandbox",
+            provider="alicloud-fc",
+            package="langchain-alicloud-fc",
+        )
+        fc_backend = _import_provider_module(
+            "langchain_alicloud_fc",
+            provider="alicloud-fc",
+            package="langchain-alicloud-fc",
+        )
+
+        template_type = agentrun_module.TemplateType.CODE_INTERPRETER
+
+        if sandbox_id:
+            sandbox = agentrun_module.Sandbox.connect(
+                sandbox_id,
+                template_type=template_type,
+            )
+        else:
+            sandbox = agentrun_module.Sandbox.create(
+                template_type=template_type,
+                template_name=self._template_name,
+            )
+
+        # Poll health check until the sandbox is ready.
+        max_retries = 60  # maximum wait time in seconds for sandbox readiness
+        last_exc: Exception | None = None
+        for attempt in range(max_retries):
+            try:
+                health = sandbox.check_health()
+                if health.get("status") == "ok":
+                    break
+            except Exception as exc:  # noqa: BLE001  # Transient failures expected during readiness polling
+                last_exc = exc
+                logger.debug(
+                    "[%d/%d] FC sandbox health check failed: %s",
+                    attempt + 1,
+                    max_retries,
+                    exc,
+                )
+            time.sleep(1)
+        else:
+            if not sandbox_id:
+                with contextlib.suppress(Exception):
+                    sandbox.delete()
+            detail = f" Last error: {last_exc}" if last_exc else ""
+            msg = (
+                "FC sandbox failed to become ready"
+                f" within {max_retries} seconds.{detail}"
+            )
+            raise RuntimeError(msg)
+
+        return fc_backend.AlicloudFCSandbox(sandbox=sandbox)
+
+    def delete(self, *, sandbox_id: str, **kwargs: Any) -> None:  # noqa: ARG002, PLR6301  # required by SandboxProvider interface
+        """Delete an FC sandbox by id.
+
+        Args:
+            sandbox_id: Sandbox ID to delete.
+            **kwargs: Additional parameters (unused).
+        """
+        agentrun_module = _import_provider_module(
+            "agentrun.sandbox",
+            provider="alicloud-fc",
+            package="langchain-alicloud-fc",
+        )
+        try:
+            agentrun_module.Sandbox.delete_by_id(sandbox_id)
+            logger.info("FC sandbox %s deleted", sandbox_id)
+        except Exception:
+            logger.warning(
+                "Failed to delete FC sandbox %s — the sandbox may "
+                "still be running. Check the Alibaba Cloud console.",
+                sandbox_id,
+                exc_info=True,
+            )
 
 
 class _DaytonaProvider(SandboxProvider):
@@ -817,8 +935,8 @@ def _get_provider(provider_name: str) -> SandboxProvider:
     """Get a `SandboxProvider` instance for the specified provider (internal).
 
     Args:
-        provider_name: Name of the provider (`'agentcore'`, `'daytona'`, `'langsmith'`,
-            `'modal'`, `'runloop'`)
+        provider_name: Name of the provider (`'agentcore'`, `'alicloud-fc'`,
+            `'daytona'`, `'langsmith'`, `'modal'`, `'runloop'`)
 
     Returns:
         `SandboxProvider` instance
@@ -828,6 +946,8 @@ def _get_provider(provider_name: str) -> SandboxProvider:
     """
     if provider_name == "agentcore":
         return _AgentCoreProvider()
+    if provider_name == "alicloud-fc":
+        return _AlicloudFCProvider()
     if provider_name == "daytona":
         return _DaytonaProvider()
     if provider_name == "langsmith":
@@ -865,6 +985,7 @@ def verify_sandbox_deps(provider: str) -> None:
     # transitive dependency of the backend package.
     backend_modules: dict[str, tuple[str, str]] = {
         "agentcore": ("langchain_agentcore_codeinterpreter", "agentcore"),
+        "alicloud-fc": ("langchain_alicloud_fc", "alicloud-fc"),
         "daytona": ("langchain_daytona", "daytona"),
         "modal": ("langchain_modal", "modal"),
         "runloop": ("langchain_runloop", "runloop"),
