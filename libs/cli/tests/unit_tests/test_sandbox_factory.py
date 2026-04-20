@@ -240,6 +240,7 @@ def test_agentcore_delete_untracked_session() -> None:
     ("provider", "expected"),
     [
         ("agentcore", "/tmp"),
+        ("alicloud-fc", "/home/user"),
         ("daytona", "/home/daytona"),
         ("langsmith", "/tmp"),
         ("modal", "/workspace"),
@@ -258,6 +259,7 @@ class TestVerifySandboxDeps:
         ("provider", "expected_module"),
         [
             ("agentcore", "langchain_agentcore_codeinterpreter"),
+            ("alicloud-fc", "langchain_alicloud_fc"),
             ("daytona", "langchain_daytona"),
             ("modal", "langchain_modal"),
             ("runloop", "langchain_runloop"),
@@ -285,7 +287,7 @@ class TestVerifySandboxDeps:
 
     @pytest.mark.parametrize(
         "provider",
-        ["agentcore", "daytona", "modal", "runloop"],
+        ["agentcore", "alicloud-fc", "daytona", "modal", "runloop"],
     )
     def test_passes_when_backend_installed(self, provider: str) -> None:
         """Should not raise when the backend module is found."""

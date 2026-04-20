@@ -104,6 +104,7 @@ all-providers = [
 
 # Sandbox providers
 agentcore = ["langchain-agentcore-codeinterpreter>=0.0.1"]
+alicloud-fc = ["langchain-alicloud-fc>=0.0.1"]
 daytona = ["langchain-daytona>=0.0.4"]
 modal = ["langchain-modal>=0.0.2"]
 runloop = ["langchain-runloop>=0.0.3"]
@@ -155,6 +156,7 @@ packages = ["deepagents_cli"]
 
 [tool.uv.sources]
 deepagents = { path = "../deepagents", editable = true }
+langchain-alicloud-fc = { path = "../partners/alicloud-fc", editable = true }
 langchain-daytona = { path = "../partners/daytona", editable = true }
 langchain-modal = { path = "../partners/modal", editable = true }
 langchain-runloop = { path = "../partners/runloop", editable = true }
@@ -163,6 +165,7 @@ langchain-runloop = { path = "../partners/runloop", editable = true }
 python-version = "3.11"
 extra-paths = [
     "../deepagents",
+    "../partners/alicloud-fc",
     "../partners/daytona",
     "../partners/modal",
     "../partners/runloop",
